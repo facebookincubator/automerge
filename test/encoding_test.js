@@ -2,7 +2,7 @@ const assert = require('assert')
 const { checkEncoded } = require('./helpers')
 const { Encoder, Decoder, RLEEncoder, RLEDecoder, DeltaEncoder, DeltaDecoder, BooleanEncoder, BooleanDecoder } = require('../backend/encoding')
 
-describe('Binary encoding', () => {
+describe('Binary encoding modern web browsers', () => {
   describe('Encoder and Decoder', () => {
     describe('32-bit LEB128 encoding', () => {
       it('should encode unsigned integers', () => {
@@ -996,6 +996,91 @@ describe('Binary encoding', () => {
         assert.throws(() => { new BooleanEncoder().copyFrom(new Decoder(new Uint8Array(0))) }, /incompatible type of decoder/)
         assert.throws(() => { new BooleanEncoder().copyFrom(new BooleanDecoder(new Uint8Array([2, 0]))) }, /Zero-length runs/)
       })
+    })
+  })
+})
+
+describe('Binary encoding Node.js', () => {
+  // "mock" to simulate TextEncoder is not defined
+  let a
+  before(() => {
+    a = TextEncoder
+    // eslint-disable-next-line no-implicit-globals, no-global-assign
+    TextEncoder = 'not a function'
+  })
+
+  after(() => {
+    // eslint-disable-next-line no-implicit-globals, no-global-assign
+    TextEncoder = a
+  })
+
+  describe('Encoder and Decoder ', () => {
+    describe('UTF-8 encoding ', () => {
+      it('should encode strings ', () => {
+        checkEncoded(new Encoder().appendPrefixedString(''), [0])
+        checkEncoded(new Encoder().appendPrefixedString('a'), [1, 0x61])
+        checkEncoded(new Encoder().appendPrefixedString('Oh là là'), [10, 79, 104, 32, 108, 195, 160, 32, 108, 195, 160])
+        checkEncoded(new Encoder().appendPrefixedString('😄'), [4, 0xf0, 0x9f, 0x98, 0x84])
+      })
+
+      it('should round-trip strings ', () => {
+        assert.strictEqual(new Decoder(new Encoder().appendPrefixedString('').buffer).readPrefixedString(), '')
+        assert.strictEqual(new Decoder(new Encoder().appendPrefixedString('a').buffer).readPrefixedString(), 'a')
+        assert.strictEqual(new Decoder(new Encoder().appendPrefixedString('Oh là là').buffer).readPrefixedString(), 'Oh là là')
+        assert.strictEqual(new Decoder(new Encoder().appendPrefixedString('😄').buffer).readPrefixedString(), '😄')
+      })
+
+      it('should encode multiple strings ', () => {
+        const encoder = new Encoder()
+        encoder.appendPrefixedString('one')
+        encoder.appendPrefixedString('two')
+        encoder.appendPrefixedString('three')
+        const decoder = new Decoder(encoder.buffer)
+        assert.strictEqual(decoder.readPrefixedString(), 'one')
+        assert.strictEqual(decoder.readPrefixedString(), 'two')
+        assert.strictEqual(decoder.readPrefixedString(), 'three')
+      })
+    })
+  })
+  describe('RLEEncoder and RLEDecoder', () => {
+    function encodeRLE(type, values) {
+      const encoder = new RLEEncoder(type)
+      for (let value of values) encoder.appendValue(value)
+      return encoder.buffer
+    }
+
+    function decodeRLE(type, buffer) {
+      if (Array.isArray(buffer)) buffer = new Uint8Array(buffer)
+      const decoder = new RLEDecoder(type, buffer), values = []
+      while (!decoder.done) values.push(decoder.readValue())
+      return values
+    }
+
+    it('should support encoding string values', () => {
+      checkEncoded(encodeRLE('utf8', ['a']), [0x7f, 1, 0x61])
+      checkEncoded(encodeRLE('utf8', ['a', 'b', 'c', 'd']), [0x7c, 1, 0x61, 1, 0x62, 1, 0x63, 1, 0x64])
+      checkEncoded(encodeRLE('utf8', ['a', 'a', 'a', 'a']), [4, 1, 0x61])
+      checkEncoded(encodeRLE('utf8', ['a', 'a', null, null, 'a', 'a']), [2, 1, 0x61, 0, 2, 2, 1, 0x61])
+      checkEncoded(encodeRLE('utf8', [null, null, null, null, 'abc']), [0, 4, 0x7f, 3, 0x61, 0x62, 0x63])
+    })
+
+    it('should round-trip sequences of string values', () => {
+      assert.deepStrictEqual(decodeRLE('utf8', encodeRLE('utf8', ['a'])), ['a'])
+      assert.deepStrictEqual(decodeRLE('utf8', encodeRLE('utf8', ['a', 'b', 'c', 'd'])), ['a', 'b', 'c', 'd'])
+      assert.deepStrictEqual(decodeRLE('utf8', encodeRLE('utf8', ['a', 'a', 'a', 'a'])), ['a', 'a', 'a', 'a'])
+      assert.deepStrictEqual(decodeRLE('utf8', encodeRLE('utf8', ['a', 'a', null, null, 'a', 'a'])), ['a', 'a', null, null, 'a', 'a'])
+      assert.deepStrictEqual(decodeRLE('utf8', encodeRLE('utf8', [null, null, null, null, 'abc'])), [null, null, null, null, 'abc'])
+    })
+
+    it('should allow skipping integer values', () => {
+      const example = [null, null, null, 1, 1, 1, 2, 3, 4, 5]
+      const encoded = encodeRLE('uint', example)
+      for (let skipNum = 0; skipNum < example.length; skipNum++) {
+        const decoder = new RLEDecoder('uint', encoded), values = []
+        decoder.skipValues(skipNum)
+        while (!decoder.done) values.push(decoder.readValue())
+        assert.deepStrictEqual(values, example.slice(skipNum), `skipping ${skipNum} values failed`)
+      }
     })
   })
 })
