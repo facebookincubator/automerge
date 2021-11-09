@@ -324,7 +324,7 @@ function compareArrays(a, b) {
  * Given a backend and what we believe to be the state of our peer, generate a message which tells
  * them about we have and includes any changes we believe they need
  */
-function generateSyncMessage(backend, syncState) {
+function generateSyncMessage(backend, syncState, maxChanges=null) {
   if (!backend) {
     throw new Error("generateSyncMessage called with no Automerge document")
   }
@@ -364,6 +364,11 @@ function generateSyncMessage(backend, syncState) {
   // XXX: we should limit ourselves to only sending a subset of all the messages, probably limited by a total message size
   //      these changes should ideally be RLE encoded but we haven't implemented that yet.
   let changesToSend = Array.isArray(theirHave) && Array.isArray(theirNeed) ? getChangesToSend(backend, theirHave, theirNeed) : []
+
+  // Limit message to have max number of changes to reduce message size
+  if (maxChanges) {
+    changesToSend = changesToSend.splice(0, maxChanges)
+  }
 
   // If the heads are equal, we're in sync and don't need to do anything further
   const headsUnchanged = Array.isArray(lastSentHeads) && compareArrays(ourHeads, lastSentHeads)

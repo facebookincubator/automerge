@@ -120,9 +120,9 @@ function getHistory(doc) {
   )
 }
 
-function generateSyncMessage(doc, syncState) {
+function generateSyncMessage(doc, syncState, maxChanges=null) {
   const state = Frontend.getBackendState(doc, 'generateSyncMessage')
-  return backend.generateSyncMessage(state, syncState)
+  return backend.generateSyncMessage(state, syncState, maxChanges)
 }
 
 function receiveSyncMessage(doc, oldSyncState, message) {
