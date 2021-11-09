@@ -13,7 +13,7 @@ function getMissingDeps(doc) {
 }
 
 function sync(a, b, aSyncState = initSyncState(), bSyncState = initSyncState()) {
-  const MAX_ITER = 10
+  const MAX_ITER = 100
   let aToBmsg = null, bToAmsg = null, i = 0
   do {
     [aSyncState, aToBmsg] = Automerge.generateSyncMessage(a, aSyncState)

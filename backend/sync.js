@@ -256,7 +256,7 @@ function getChangesToSend(backend, have, need) {
 
   // Get all changes that were added since the last sync
   const changes = Backend.getChanges(backend, Object.keys(lastSyncHashes))
-    .map(change => decodeChangeMeta(change, true))
+    .map(change => decodeChangeMeta(change, true)).splice(0, 5)
 
   let changeHashes = {}, dependents = {}, hashesToSend = {}
   for (let change of changes) {

@@ -101,7 +101,7 @@ class Encoder {
    */
   grow(minSize = 0) {
     let newSize = this.buf.byteLength * 4
-    while (newSize < minSize) newSize *= 2
+    while (newSize < minSize) newSize *= 2 
     const newBuf = new Uint8Array(newSize)
     newBuf.set(this.buf, 0)
     this.buf = newBuf
