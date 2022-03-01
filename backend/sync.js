@@ -25,6 +25,11 @@ const HASH_SIZE = 32 // 256 bits = 32 bytes
 const MESSAGE_TYPE_SYNC = 0x42 // first byte of a sync message, for identification
 const PEER_STATE_TYPE = 0x43 // first byte of an encoded peer state, for identification
 
+// Message size constraint constants
+const COMPLETE = 0x1
+const INCOMPLETE = 0x0
+const CHANGES_SIZE_BUFFER_LENGTH = 4
+
 // These constants correspond to a 1% false positive rate. The values can be changed without
 // breaking compatibility of the network protocol, since the parameters used for a particular
 // Bloom filter are encoded in the wire format.
@@ -165,14 +170,21 @@ function encodeSyncMessage(message, getChangesCallBack=null) {
     encoder.appendPrefixedBytes(have.bloom)
   }
 
-  const changes = getChangesCallBack === null ? 
-    message.changes : 
+  const allChangesSent = message.hasOwnProperty('allChangesSent')
+    ? message.allChangesSent
+    : COMPLETE;
+
+  const [changes, areChangesComplete] = getChangesCallBack === null ?
+    [message.changes, allChangesSent] :
     getChangesCallBack(encoder, message);
 
   encoder.appendUint32(changes.length)
   for (let change of changes) {
     encoder.appendPrefixedBytes(change)
   }
+
+  encoder.appendByte(areChangesComplete ? COMPLETE : INCOMPLETE);
+
   return encoder.buffer
 }
 
@@ -199,6 +211,8 @@ function decodeSyncMessage(bytes) {
     const change = decoder.readPrefixedBytes()
     message.changes.push(change)
   }
+  const allChangesSent = decoder.readByte()
+  message.allChangesSent = allChangesSent
   // Ignore any trailing bytes -- they can be used for extensions by future versions of the protocol
   return message
 }
@@ -318,6 +332,7 @@ function initSyncState() {
     theirNeed: null,
     theirHave: null,
     sentHashes: {},
+    allChangesSent: null,
   }
 }
 
@@ -337,7 +352,7 @@ function generateSyncMessage(backend, syncState, maxMsgLength) {
     throw new Error("generateSyncMessage requires a syncState, which can be created with initSyncState()")
   }
 
-  let { sharedHeads, lastSentHeads, theirHeads, theirNeed, theirHave, sentHashes } = syncState
+  let { sharedHeads, lastSentHeads, theirHeads, theirNeed, theirHave, sentHashes, allChangesSent } = syncState
   const ourHeads = Backend.getHeads(backend)
 
   // Hashes to explicitly request from the remote peer: any missing dependencies of unapplied
@@ -361,7 +376,7 @@ function generateSyncMessage(backend, syncState, maxMsgLength) {
     const lastSync = theirHave[0].lastSync
     if (!lastSync.every(hash => Backend.getChangeByHash(backend, hash))) {
       // we need to queue them to send us a fresh sync message, the one they sent is uninteligible so we don't know what they need
-      const resetMsg = {heads: ourHeads, need: [], have: [{ lastSync: [], bloom: new Uint8Array(0) }], changes: []}
+      const resetMsg = {heads: ourHeads, need: [], have: [{ lastSync: [], bloom: new Uint8Array(0) }], changes: [], allChangesSent: INCOMPLETE}
       return [syncState, encodeSyncMessage(resetMsg)]
     }
   }
@@ -387,12 +402,13 @@ function generateSyncMessage(backend, syncState, maxMsgLength) {
     let currentLength = encoder.buffer.length
     const allChanges = message.changes
     const changes = []
-    const changesSizeBufferLength = 4
+    let areChangesComplete = true
     for (let change of allChanges) {
-      if (currentLength + change.length + changesSizeBufferLength > maxMsgLength) {
+      if (currentLength + change.length + CHANGES_SIZE_BUFFER_LENGTH > maxMsgLength) {
+        areChangesComplete = false
         break;
       }
-    
+
       currentLength += change.length;
       changes.push(change);
     }
@@ -401,8 +417,8 @@ function generateSyncMessage(backend, syncState, maxMsgLength) {
       throw new Error("Sync message is already too big without changes! Length: " + currentLength
           + " / Maximum length: " + maxMsgLength);
     } else if (changes.length == 0 && allChanges.length !== 0) {
-      throw new Error("Can't fit any changes into the encoded message! Current length: " 
-          + currentLength + " / Length of first change: " + allChanges[0].length 
+      throw new Error("Can't fit any changes into the encoded message! Current length: "
+          + currentLength + " / Length of first change: " + allChanges[0].length
           + " / Maximum length: " + maxMsgLength);
     }
 
@@ -416,7 +432,7 @@ function generateSyncMessage(backend, syncState, maxMsgLength) {
       }
     }
 
-    return changes;
+    return [changes, areChangesComplete];
   })
 
   syncState = Object.assign({}, syncState, {lastSentHeads: ourHeads, sentHashes})
@@ -498,7 +514,8 @@ function receiveSyncMessage(backend, oldSyncState, binaryMessage) {
     theirHave: message.have, // the information we need to calculate the changes they need
     theirHeads: message.heads,
     theirNeed: message.need,
-    sentHashes
+    sentHashes,
+    allChangesSent: message.allChangesSent
   }
   return [backend, syncState, patch]
 }
